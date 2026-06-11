@@ -1,0 +1,515 @@
+import pygame
+import random
+import math
+
+R = 10
+R_SQRT = R / math.sqrt(2)
+
+N=50
+SCREEN = R_SQRT * N * 2
+
+DELAY = 200
+
+TIMER = 0
+TIME_LIMIT = 5000
+
+cellulose = []
+cellulace=[]
+chains = []
+moving = []
+
+font = None
+cnt=0
+
+class Cellulose():
+    def __init__(self,idx, chain, x, y, r,fixed=False,end=False):
+        self.idx = idx
+        self.chain_idx = chain
+        self.x = x
+        self.y = y
+        self.dx = 0 # 상대 좌표
+        self.dy = 0
+        self.r = r
+        self.color = (0, 120, 0)
+        self.fixed = fixed
+        self.isEnd = end
+
+    def draw(self, screen):
+        pygame.draw.circle(screen, self.color, (self.x, self.y), self.r)
+    
+    def setXY(self):
+        self.x = chains[self.chain_idx].center_x + self.dx
+        self.y = chains[self.chain_idx].center_y + self.dy
+
+    def getPos(self):
+        self.setXY()
+        return (self.x,self.y)
+
+    def update(self):
+        pass
+
+class Cellulase():
+    def __init__(self, idx, chain, x, y, r):
+        self.idx = idx
+        self.chain_idx = chain
+        self.x = x
+        self.y = y
+        self.dx = 0 # 상대 좌표
+        self.dy = 0
+        self.r = r
+        self.color = (255, 0, 0)
+        self.fixed = False
+        self.bond_time = -1
+        self.bonded = None
+        self.idx_in_chain = None
+
+    def draw(self, screen):
+        pygame.draw.circle(screen, self.color, (self.x, self.y), self.r)
+
+    def setXY(self):
+        self.x = chains[self.chain_idx].center_x + self.dx
+        self.y = chains[self.chain_idx].center_y + self.dy
+
+    def getPos(self):
+        self.setXY()
+        return (self.x,self.y)
+    
+    def unbond(self):
+        pass
+
+    def checkBond(self, c,idx):
+        return True
+
+    def update(self):
+        if self.bond_time > 0:
+            self.bond_time -= 1
+            if self.bond_time == 0:
+                self.unbond()
+                chains[self.chain_idx].unbond(chains[self.chain_idx].bonded[self.idx_in_chain],self.idx_in_chain)
+                self.bonded = None
+                self.bond_time = -DELAY
+        elif self.bond_time<-1:
+            self.bond_time +=1
+        elif self.bonded is None:
+            pos = self.getPos()
+            foundCell = False
+            for i,chain in enumerate(chains):
+                if not moving[i]: continue
+                if chain.idx == self.chain_idx: continue
+                for j,c in enumerate(chain.components):
+                    if chain.bonded is None and c.color == (0,120,0):
+                        if not self.checkBond(c,j): continue
+                        cell_pos = c.getPos()
+                        if math.hypot(cell_pos[0]-pos[0],cell_pos[1]-pos[1]) <= 2*R:
+                            chains[self.chain_idx].bond(chain.idx,self.idx_in_chain)
+                            self.bonded = c.idx
+                            self.bond_time = DELAY
+                            foundCell = True
+                            break
+                if foundCell: break
+
+class Endoglucanase(Cellulase):
+    def __init__(self, idx, c, x, y, r):
+        super().__init__(idx, c, x, y, r)
+        self.color = (255, 0, 0)
+    def unbond(self):
+        chains[chains[self.chain_idx].bonded[self.idx_in_chain]].divide(self.bonded)
+    def checkBond(self, c,idx):
+        chain = chains[c.chain_idx]
+        return (not c.isEnd and not c.fixed and len(chain.components)>6
+            and (chain.components[0].fixed or chain.components[-1].fixed or (idx >= 3 and idx < len(chain.components)-4) or idx == len(chain.components)//2))
+
+class Exoglucanase(Cellulase):
+    def __init__(self, idx, c, x, y, r):
+        super().__init__(idx, c, x, y, r)
+        self.color = (0, 255, 0)
+    
+    def checkBond(self,c,idx):
+        chain = chains[c.chain_idx]
+        return (c.isEnd and len(chain.components)<=6 and len(chain.components)>2)
+    
+    def unbond(self):
+        chain = chains[chains[self.chain_idx].bonded[self.idx_in_chain]]
+        chain.cut(chain.components[0].idx == self.bonded)
+
+    def update(self):
+        if self.bond_time > 0:
+            chain = chains[chains[self.chain_idx].bonded[self.idx_in_chain]]
+            direction = 0
+            if chain.components[0].idx == self.bonded:
+                for c in chain.components:
+                    c.dx-=1/math.sqrt(2)
+                    c.dy-=1/math.sqrt(2)
+            else:
+                direction = -1
+                for c in chain.components:
+                    c.dx+=1/math.sqrt(2)
+                    c.dy+=1/math.sqrt(2)
+            self.bond_time+=1
+
+            if self.bond_time == 21:
+                self.unbond()
+                chains[self.chain_idx].unbond(chains[self.chain_idx].bonded[self.idx_in_chain],self.idx_in_chain)
+                self.bonded = None
+
+                if len(chain.components) > 2:
+                    c = chain.components[direction]
+                    chains[self.chain_idx].bond(chain.idx,self.idx_in_chain)
+                    self.bonded = c.idx
+                    self.bond_time = 1
+                else:
+                    self.bond_time = -DELAY
+
+        elif self.bond_time<-1:
+            self.bond_time +=1
+
+        elif self.bonded is None:
+            pos = self.getPos()
+            foundCell = False
+            for i,chain in enumerate(chains):
+                if not moving[i]: continue
+                if chain.idx == self.chain_idx: continue
+                for j,c in enumerate(chain.components):
+                    if chain.bonded is None and c.color == (0,120,0):
+                        if not self.checkBond(c,j): continue
+                        cell_pos = c.getPos()
+                        if math.hypot(cell_pos[0]-pos[0],cell_pos[1]-pos[1]) <= 2*R:
+                            chains[self.chain_idx].bond(chain.idx,self.idx_in_chain)
+                            self.bonded = c.idx
+                            self.bond_time = 1
+                            foundCell = True
+                            break
+                if foundCell: break
+    
+    #셀룰로스 따라서 이동하면서 끊기
+        
+class BetaGlucosidase(Cellulase):
+    def __init__(self, idx, c, x, y, r):
+        super().__init__(idx, c, x, y, r)
+        self.color = (0, 0, 255)
+    
+    def unbond(self):
+        chains[chains[self.chain_idx].bonded[self.idx_in_chain]].seperate()
+
+    def checkBond(self,c,idx):
+        return len(chains[c.chain_idx].components) == 2
+
+class Chain():
+    def __init__(self, idx, components=[]):
+        self.idx = idx
+        self.components = components # 결합한 순서대로 저장
+        for c in components:
+            c.chain_idx = idx
+        self.bonded = None
+        self.connected = []
+        self.dx=0
+        self.dy=0
+        self.seta=0
+        self.center_x=0
+        self.center_y=0
+        self.set_coordinates()
+
+    def divide(self,idx):
+        for i,c in enumerate(self.components):
+            if c.idx==idx:
+                self.setXY()
+                moving.append(1)
+                if len(self.components)//2>=i:
+                    if self.components[i+1:]:
+                        comp = self.components[i+1:].copy()
+                        comp[0].isEnd = True
+                        chains.append(Chain(len(chains),comp))
+                        self.components = self.components[:i+1].copy()
+                        self.components[-1].isEnd= True
+                else:
+                    if self.components[i:]:
+                        comp = self.components[i:].copy()
+                        comp[0].isEnd = True
+                        chains.append(Chain(len(chains),comp))
+                        self.components = self.components[:i].copy()
+                        self.components[-1].isEnd=True
+                self.set_coordinates()
+                break
+
+    def cut(self,f):
+        self.setXY()
+        if self.components[0].fixed:
+            self.components[0].fixed=False
+        elif self.components[-1].fixed:
+            self.components[-1].fixed=False
+        if len(self.components) > 2:
+            moving.append(1)
+            if f:
+                chains.append(Chain(len(chains),self.components[:2]))
+                self.components = self.components[2:]
+            else:
+                chains.append(Chain(len(chains),self.components[-2:]))
+                self.components = self.components[:-2]
+        self.set_coordinates()
+    
+    def seperate(self):
+        self.setXY()
+        moving.append(1)
+        chains.append(Chain(len(chains),[self.components[1]]))
+        self.components = [self.components[0]]
+        self.set_coordinates()
+
+    def bond(self, other_idx): # self를 중심으로
+        self.bonded = other_idx
+        chains[other_idx].bonded = self.idx
+        self.set_coordinates()
+        chains[other_idx].set_coordinates()
+        moving[other_idx] = 0
+
+    def unbond(self,other_idx):
+        self.bonded = None
+        chains[other_idx].bonded = None
+        self.set_coordinates()
+        chains[other_idx].set_coordinates()
+        moving[other_idx] = 1
+
+    def add_component(self, cell):
+        self.components.append(cell)
+
+    def set_coordinates(self):
+        self.connected = self.components.copy()
+        if self.bonded is not None:
+            self.connected += chains[self.bonded].components
+        self.center_x = sum(c.x for c in self.connected) / len(self.connected) if self.connected else 0
+        self.center_y = sum(c.y for c in self.connected) / len(self.connected) if self.connected else 0
+        for c in self.components:
+            c.dx = c.x - self.center_x
+            c.dy = c.y - self.center_y
+
+    def setXY(self):
+        for c in self.components:
+            c.setXY()
+
+    def draw(self,screen):
+        for c in self.components:
+            pygame.draw.circle(screen, c.color, (self.center_x + c.dx, self.center_y + c.dy), c.r)
+
+    def move(self):
+        if any(c.fixed for c in self.connected):
+            return
+        
+        self.dx += random.uniform(-0.1,0.1)
+        self.dy += random.uniform(-0.1,0.1)
+        self.seta += random.uniform(-0.001,0.001)
+        self.dx = -1 if self.dx < -1 else 1 if self.dx > 1 else self.dx
+        self.dy = -1 if self.dy < -1 else 1 if self.dy > 1 else self.dy
+        self.seta = -0.005 if self.seta < -0.005 else 0.005 if self.seta > 0.005 else self.seta
+
+        dx,dy=self.dx,self.dy
+
+        inversed = [False,False]
+        selected = [False,False]
+        while not all(selected):
+            for c in self.connected:
+                c.x = c.dx + self.center_x
+                c.y = c.dy + self.center_y
+                if c.x + dx < R:
+                    dx = R-c.x+dx
+                elif c.x + dx > SCREEN - R:
+                    dx = SCREEN-R - c.x+dx
+
+                if dx == 0: 
+                    if inversed[0]: 
+                        self.dx=0
+                        selected[0] = True
+                    else: 
+                        inversed[0]=True
+                        self.dx = -self.dx
+                        dx = self.dx
+
+                if c.y + dy < R:
+                    dy = R-c.y+dy
+                elif c.y + dy > SCREEN - R:
+                    dy = SCREEN-R - c.y+dy
+
+                if dy == 0: 
+                    if inversed[1]: 
+                        self.dy=0
+                        selected[1] = True
+                    else: 
+                        inversed[1]=True
+                        self.dy = -self.dy
+                        dy = self.dy
+                
+
+            if self.dx!=0:
+                self.dx = dx
+                selected[0] = True
+            if self.dy!=0:
+                self.dy = dy
+                selected[1] = True
+
+        self.rotate(self.seta)
+        self.center_x += self.dx
+        self.center_y += self.dy
+        if self.bonded is not None:
+            for c in self.bonded:
+                if c is not None:
+                    chains[c].rotate(self.seta)
+                    chains[c].center_x += self.dx
+                    chains[c].center_y += self.dy
+    
+    def rotate(self,seta):
+        for c in self.connected:
+            new_dx = c.dx*math.cos(seta) - c.dy*math.sin(seta)
+            new_dy = c.dx*math.sin(seta) + c.dy*math.cos(seta)
+            c.dx,c.dy=new_dx,new_dy
+
+class EnzymeChain(Chain):
+    def __init__(self,idx,components=[]):
+        super().__init__(idx,components)
+        self.bonded = [None] * len(self.components)
+
+        for i,c in enumerate(self.components):
+            c.idx_in_chain = i
+    
+    def bond(self, other_idx, enzyme_idx): # self를 중심으로
+        self.bonded[enzyme_idx] = other_idx
+        chains[other_idx].bonded = self.idx
+        self.set_coordinates()
+        chains[other_idx].set_coordinates()
+        moving[other_idx] = 0
+
+    def unbond(self,other_idx,enzyme_idx):
+        self.bonded[enzyme_idx] = None
+        chains[other_idx].bonded = None
+        self.set_coordinates()
+        chains[other_idx].set_coordinates()
+        moving[other_idx] = 1
+
+    def set_coordinates(self):
+        self.connected = self.components.copy()
+        if self.bonded:
+            for c in self.bonded:
+                if c is not None:
+                    self.connected += chains[c].components
+        self.center_x = sum(c.x for c in self.connected) / len(self.connected) if self.connected else 0
+        self.center_y = sum(c.y for c in self.connected) / len(self.connected) if self.connected else 0
+        for c in self.components:
+            c.dx = c.x - self.center_x
+            c.dy = c.y - self.center_y
+        
+
+def generatePos(cellulose):
+    while True:
+        x = random.uniform(R, SCREEN-R)
+        y = random.uniform(R, SCREEN-R)
+        if all(math.hypot(x-cell.x, y-cell.y) > 2*R for cell in cellulose):
+            return x, y
+
+def draw(screen):
+    global cnt
+    screen.fill((255, 255, 255))
+    for chain in chains:
+        chain.draw(screen)
+
+    timer_text = font.render(f"{TIMER}", True, (0, 0, 0))
+    text_rect = timer_text.get_rect()
+    text_rect.topright = (SCREEN - 3, 0)
+    screen.blit(timer_text, text_rect)
+
+    cnt = 0
+    for c in chains:
+        if len(c.components)==1 and c.components[0].color == (0,120,0) and not c.components[0].fixed:
+            cnt+=1
+    count_text = font.render(f"{cnt}",True, (0,0,0))
+    count_rect = count_text.get_rect()
+    count_rect.bottomleft = (3, SCREEN)
+    screen.blit(count_text, count_rect)
+
+    pygame.display.flip()
+
+def generate():
+    for i in range(N):
+        if i==0:
+            cellulose.append(Cellulose(len(cellulose), len(chains), 2*i*R_SQRT+R_SQRT+5,2*i*R_SQRT+R_SQRT+5, R,True))
+            chains.append(Chain(len(chains),[cellulose[-1]]))
+        else:
+            cellulose.append(Cellulose(len(cellulose), len(chains)-1, 2*i*R_SQRT+R_SQRT+5,2*i*R_SQRT+R_SQRT+5, R,i==N-1))
+            chains[-1].add_component(cellulose[-1])
+    chains[-1].set_coordinates()
+
+    for i in range(N-1):
+        if i==0:
+            cellulose.append(Cellulose(len(cellulose), len(chains), 4*R_SQRT+2*i*R_SQRT,2*i*R_SQRT+R_SQRT, R,True))
+            chains.append(Chain(len(chains),[cellulose[-1]]))
+        else:
+            cellulose.append(Cellulose(len(cellulose), len(chains)-1, 4*R_SQRT+2*i*R_SQRT,2*i*R_SQRT+R_SQRT, R,i==N-2))
+            chains[-1].add_component(cellulose[-1])
+    chains[-1].set_coordinates()
+
+    for i in range(N-1):
+        if i==0:
+            cellulose.append(Cellulose(len(cellulose), len(chains), R_SQRT+2*i*R_SQRT,2*i*R_SQRT+4*R_SQRT, R,True))
+            chains.append(Chain(len(chains),[cellulose[-1]]))
+        else:
+            cellulose.append(Cellulose(len(cellulose), len(chains)-1, R_SQRT+2*i*R_SQRT,2*i*R_SQRT+4*R_SQRT, R,i==N-2))
+            chains[-1].add_component(cellulose[-1])
+    chains[-1].set_coordinates()
+        
+    for i in range(10):
+        x, y = generatePos(cellulose)
+        cellulace.append(Endoglucanase(len(cellulace), len(chains), x, y, R))
+        chains.append(EnzymeChain(len(chains),[cellulace[-1]]))
+        x, y = generatePos(cellulose)
+        cellulace.append(Exoglucanase(len(cellulace), len(chains), x, y, R))
+        chains.append(EnzymeChain(len(chains),[cellulace[-1]]))
+        x, y = generatePos(cellulose)
+        cellulace.append(BetaGlucosidase(len(cellulace), len(chains), x, y, R))
+        chains.append(EnzymeChain(len(chains),[cellulace[-1]]))
+    
+
+def main():
+    global moving,TIMER, font,cellulace,cellulose,chains,moving,cnt
+
+    TIMER = 0
+
+    cellulose = []
+    cellulace=[]
+    chains = []
+    moving = []
+
+    pygame.init()
+    screen = pygame.display.set_mode((SCREEN, SCREEN))
+    clock = pygame.Clock()
+    font = pygame.font.SysFont("malgungothic", 20)
+
+    generate()
+
+    moving = [1]*len(chains)
+   
+    running = True
+    while running:
+        TIMER += 1
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+        for i,c in enumerate(chains):
+            if moving[i]: c.move()
+            for component in c.components:
+                component.update()
+
+        draw(screen)
+        pygame.display.flip()
+        clock.tick(1000)
+
+        if TIMER >= TIME_LIMIT:
+            break
+    # while running:
+    #     for event in pygame.event.get():
+    #         if event.type == pygame.QUIT:
+    #             running = False
+
+
+    pygame.quit()
+
+if __name__ == "__main__":
+    for _ in range(10):
+        main()
+        print(cnt)
